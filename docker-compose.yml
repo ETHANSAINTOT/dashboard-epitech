@@ -1,0 +1,85 @@
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: dashboard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - dashboard-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # finds the machine's own network address at each start, for about.json (client.host): a container on the HOST
+  # network sees the host's routes, the others only see Docker's. writes it to a volume, then stops
+  host-ip:
+    image: alpine:3.20
+    container_name: dashboard-host-ip
+    network_mode: host
+    command:
+      - sh
+      - -c
+      - |
+        ip route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($$i == "src") print $$(i + 1)}' > /host-ip/address; true
+    volumes:
+      - host-ip:/host-ip
+
+  backend:
+    build: ./backend
+    container_name: dashboard-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      # the address file is written before the backend starts
+      host-ip:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    expose:
+      - "3000"
+    volumes:
+      - ./backend:/app
+      - host-ip:/host-ip:ro
+
+  frontend:
+    build: ./frontend
+    container_name: dashboard-frontend
+    depends_on:
+      - backend
+    environment:
+      VITE_PROXY_TARGET: http://backend:3000
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  libretranslate:
+    image: libretranslate/libretranslate:v1.9.6
+    container_name: dashboard-translate
+    restart: unless-stopped
+    environment:
+      LT_LOAD_ONLY: en,fr,es,zh-Hans,ar,pt,hi,ja,de,ru,id
+      LT_UPDATE_MODELS: "true"
+    expose:
+      - "5000"
+    volumes:
+      - dashboard-translate-models:/home/libretranslate/.local
+    healthcheck:
+      test: ["CMD", "./venv/bin/python", "-c", "import requests; requests.get('http://localhost:5000/languages', timeout=5).raise_for_status()"]
+      interval: 10s
+      timeout: 6s
+      retries: 4
+      start_period: 15m
+
+volumes:
+  dashboard-db-data:
+  dashboard-translate-models:
+  host-ip:

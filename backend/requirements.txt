@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+httpx
+sqlalchemy[asyncio]
+asyncpg
+bcrypt
+pyjwt
+pydantic[email]
+feedparser
